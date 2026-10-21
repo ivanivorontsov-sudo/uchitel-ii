@@ -1,0 +1,5 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Учитель ИИ</title><style>body{font:15px "Segoe UI",sans-serif;background:#1f3b2c;color:#e8f2ea;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0}
+.bar{width:420px;height:10px;background:#2f5a42;border-radius:5px;overflow:hidden;margin:14px}.bar div{height:100%;width:0;background:#8fd19e}pre{max-width:80vw;max-height:30vh;overflow:auto;font-size:11px;color:#bcd}#err{color:#ffb4ab;white-space:pre-wrap;max-width:80vw}button{padding:8px 16px;font:inherit}</style></head>
+<body><h1>🎓 Учитель ИИ</h1><div id="t">Запуск…</div><div class="bar"><div id="p"></div></div><div id="err"></div><button id="r" style="display:none" onclick="uchitel.retry()">Попробовать ещё раз</button><pre id="l"></pre>
+<script>uchitel.onBoot(d=>{t.textContent=d.t;p.style.width=(100*d.p)+'%'});uchitel.onBootLog(s=>{l.textContent=(l.textContent+s).slice(-3000)});
+uchitel.onBootError(e=>{err.textContent='Ошибка: '+e+'\n\nПроверьте интернет и антивирус. Журнал: папка logs программы.';r.style.display=''})</script></body></html>

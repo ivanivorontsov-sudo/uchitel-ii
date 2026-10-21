@@ -1,0 +1,10 @@
+node_modules
+dist
+*.gguf
+*.safetensors
+*.bin
+*.pfx
+*.key
+*.pass
+__pycache__
+uchitel-data

@@ -1,0 +1,8 @@
+«Учитель ИИ» не содержит весов моделей. При работе программа скачивает:
+- Python (PSF License) — python.org
+- PyTorch (BSD-3) — pytorch.org
+- Hugging Face transformers, datasets, accelerate, peft, safetensors, trl (Apache-2.0)
+- bitsandbytes (MIT), sentencepiece (Apache-2.0), pypdf (BSD-3), python-docx (MIT), protobuf (BSD-3)
+- llama.cpp и gguf-py (MIT) — github.com/ggml-org/llama.cpp
+- Electron (MIT)
+Модели и наборы данных скачиваются с Hugging Face и распространяются по своим лицензиям (смотрите карточку модели).

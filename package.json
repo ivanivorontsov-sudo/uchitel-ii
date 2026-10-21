@@ -1,0 +1,67 @@
+{
+  "name": "uchitel-ii",
+  "version": "1.0.0",
+  "description": "Учитель ИИ — дообучение открытых нейросетей",
+  "main": "app/main.js",
+  "author": "Воронцов Иван Игоревич",
+  "license": "MIT",
+  "productName": "Учитель ИИ",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis portable",
+    "test": "node --check app/main.js && python3 -m py_compile backend/*.py"
+  },
+  "devDependencies": {
+    "electron": "33.4.11",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "ru.vorontsov.uchitel",
+    "productName": "Учитель ИИ",
+    "executableName": "UchitelII",
+    "copyright": "© 2026 Воронцов Иван Игоревич",
+    "files": [
+      "app/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "backend",
+        "to": "backend",
+        "filter": [
+          "*.py"
+        ]
+      },
+      {
+        "from": "app/ui",
+        "to": "app/ui"
+      },
+      "LICENSE.txt",
+      "THIRD-PARTY.txt"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.ico",
+      "sign": "build/sign.js"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "UchitelII-Setup-${version}.exe",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "shortcutName": "Учитель ИИ"
+    },
+    "portable": {
+      "artifactName": "UchitelII-Portable-${version}.exe"
+    },
+    "publish": null
+  },
+  "repository": "https://github.com/ivanivorontsov-sudo/uchitel-ii"
+}

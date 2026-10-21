@@ -1,0 +1,65 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Учитель ИИ</title><link rel="stylesheet" href="style.css"></head>
+<body><aside><div class="logo">🎓 Учитель ИИ</div>
+<nav>
+<a data-p="hw" class="on">💻 Компьютер</a><a data-p="env">🧰 Окружение</a><a data-p="model">🧠 Модель</a><a data-p="data">📚 Данные</a>
+<a data-p="train">🏋️ Обучение</a><a data-p="result">📦 Результат</a><a data-p="chat">💬 Проверка в чате</a><a data-p="jobs">📜 Журнал</a><a data-p="help">❓ Справка</a>
+</nav><div id="side-info"></div></aside>
+<main>
+<section id="hw" class="page on"><h1>Ваш компьютер</h1><p class="hint">Программа смотрит, какая у вас видеокарта и память, и подбирает модели и способ обучения.</p><div id="hw-box">Определяю…</div></section>
+
+<section id="env" class="page"><h1>Окружение</h1><p class="hint">Всё нужное ставится в папку без русских букв и пробелов: <code id="env-home"></code></p>
+<div class="row"><button onclick="installAll()" class="big">Установить всё недостающее</button><button onclick="loadEnv()">Проверить снова</button></div>
+<table id="env-table"></table></section>
+
+<section id="model" class="page"><h1>Выбор модели</h1><p class="hint">Зелёные модели подходят вашему компьютеру. Можно вписать любую модель с Hugging Face (например <code>Qwen/Qwen2.5-7B-Instruct</code>) — программа оценит, хватит ли памяти.</p>
+<div class="row"><input id="model-id" placeholder="Имя модели на Hugging Face" style="flex:1"><button onclick="pickModel(document.getElementById('model-id').value,0)">Выбрать</button></div>
+<div id="model-list"></div></section>
+
+<section id="data" class="page"><h1>Данные для обучения</h1>
+<div class="cards">
+<div class="card"><h3>1. Скачать из интернета</h3><input id="dl-url" placeholder="Ссылка на файл или архив (zip, tar.gz, jsonl…)"><input id="dl-sha" placeholder="SHA-256 (необязательно)">
+<button onclick="download()">Скачать (с докачкой)</button>
+<hr><input id="hf-repo" placeholder="Набор Hugging Face, например IlyaGusev/ru_turbo_saiga"><div class="row"><input id="hf-split" value="train" style="width:90px"><input id="hf-limit" type="number" value="5000" style="width:110px" title="Сколько записей взять (0 = все)"></div>
+<button onclick="hfdata()">Взять набор (потоково)</button></div>
+<div class="card"><h3>2. Свои файлы</h3><p class="hint">txt, md, pdf, docx, csv, json/jsonl, zip или целые папки.</p>
+<div class="row"><button onclick="pick('files')">Добавить файлы…</button><button onclick="pick('dir')">Добавить папку…</button></div>
+<textarea id="src" rows="5" placeholder="Пути к файлам и папкам, по одному в строке"></textarea></div>
+<div class="card"><h3>3. Подготовка</h3>
+<label>Название набора <input id="ds-name" value="moi_dannye"></label>
+<label>Формат <select id="ds-mode"><option value="auto">Авто (диалоги — как диалоги, текст — как текст)</option><option value="text">Только текст (дообучение на текстах)</option><option value="chat">Инструкции/диалоги</option></select></label>
+<label>Размер куска (символов) <input id="ds-chunk" type="number" value="1500"></label><label>Перекрытие <input id="ds-overlap" type="number" value="150"></label>
+<button class="big" onclick="prepare()">Очистить, убрать повторы, нарезать</button></div></div>
+<h2>Готовые наборы</h2><div id="ds-list"></div><h2>Предпросмотр</h2><pre id="ds-preview" class="pre">—</pre></section>
+
+<section id="train" class="page"><h1>Обучение</h1>
+<div class="cards"><div class="card"><h3>Что учим</h3>
+<label>Модель <input id="t-model"></label><label>Набор данных <select id="t-ds"></select></label>
+<label>Способ <select id="t-method"><option value="qlora">QLoRA 4 бита (видеокарта, экономно)</option><option value="lora">LoRA (видеокарта)</option><option value="full">Полное обучение весов</option><option value="cpu">LoRA на процессоре</option></select></label>
+<label>Готовая настройка <select id="t-preset" onchange="preset()"><option value="quick">Быстрая проба (мало шагов)</option><option value="normal" selected>Обычная</option><option value="deep">Тщательная</option></select></label></div>
+<div class="card"><h3>Тонкие настройки <small>(для опытных)</small></h3><div class="grid2">
+<label>Эпох <input id="t-epochs" type="number" step="0.1"></label><label>Макс. шагов (-1 = нет) <input id="t-steps" type="number"></label>
+<label>Скорость обучения <input id="t-lr"></label><label>Длина примера (токенов) <input id="t-len" type="number"></label>
+<label>Размер пачки <input id="t-batch" type="number"></label><label>Накопление градиента <input id="t-acc" type="number"></label>
+<label>LoRA r <input id="t-r" type="number"></label><label>LoRA alpha <input id="t-alpha" type="number"></label>
+<label>Сохранять каждые N шагов <input id="t-save" type="number"></label><label>Видеокарт <input id="t-gpus" type="number" value="1" min="1"></label></div></div></div>
+<div class="row"><button class="big" onclick="startTrain()">▶ Начать обучение</button><button onclick="pauseTrain()">⏸ Пауза</button><button onclick="resumeTrain()">↻ Продолжить</button><button onclick="stopTrain()" class="danger">⏹ Стоп</button></div>
+<div id="t-status" class="status">Обучение не запущено.</div><div class="bar"><div id="t-bar"></div></div>
+<canvas id="loss" width="900" height="260"></canvas><pre id="t-log" class="pre log"></pre></section>
+
+<section id="result" class="page"><h1>Результат</h1><p class="hint">1) Влейте LoRA в веса → 2) сохраните в GGUF → файл можно открыть в приложении «мини-ИИ» на телефоне.</p>
+<div id="runs"></div><h2>Готовые GGUF</h2><div id="exports"></div></section>
+
+<section id="chat" class="page"><h1>Проверка: до и после</h1><p class="hint">Один вопрос задаётся исходной модели и обученной.</p>
+<div class="row"><label style="flex:1">До: <input id="c-a"></label><label style="flex:1">После: <select id="c-b"></select></label></div>
+<div class="row"><input id="c-q" style="flex:1" placeholder="Ваш вопрос" onkeydown="if(event.key==='Enter')ask()"><button class="big" onclick="ask()">Спросить обе</button></div>
+<div class="cmp"><div><h3>До обучения</h3><div id="c-out-a" class="pre"></div></div><div><h3>После обучения</h3><div id="c-out-b" class="pre"></div></div></div></section>
+
+<section id="jobs" class="page"><h1>Журнал задач</h1><div id="jobs-list"></div><pre id="job-log" class="pre log"></pre></section>
+<section id="help" class="page"><h1>Справка</h1><div class="help">
+<p><b>Порядок работы:</b> Компьютер → Окружение («Установить всё») → Модель → Данные → Обучение → Результат → Чат.</p>
+<p><b>Способы обучения.</b> <i>Полное</i> — меняются все веса, нужно ≈16 ГБ видеопамяти на каждый млрд параметров. <i>LoRA</i> — учатся небольшие «насадки» (≈0.1–1% весов), потом они вливаются в модель. <i>QLoRA</i> — то же, но модель хранится в 4 битах: 7B помещается в 8 ГБ. <i>Процессор</i> — только крошечные модели до ~1.5B, медленно.</p>
+<p><b>Большие модели (70B+) и мощные компьютеры.</b> Укажите число видеокарт — программа запустит обучение через Accelerate на всех картах. На Linux-сервере можно запустить тот же train.py: <code>accelerate launch --num_processes 8 train.py папка_запуска</code>.</p>
+<p><b>Пауза</b> сохраняет контрольную точку; «Продолжить» начинает с неё, даже после перезапуска программы.</p>
+<p><b>Loss</b> — ошибка модели на ваших данных. Должна снижаться. Если падает почти до нуля — модель «зубрит», уменьшите эпохи.</p>
+<p><b>Для телефона</b> берите GGUF Q4_K_M: модель 0.5B ≈ 0.4 ГБ, 3B ≈ 2 ГБ, 7B ≈ 4.7 ГБ.</p></div></section>
+</main><script src="app.js"></script></body></html>
