@@ -1,7 +1,7 @@
 <!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Учитель ИИ</title><link rel="stylesheet" href="style.css"></head>
 <body><aside><div class="logo">🎓 Учитель ИИ</div>
 <nav>
-<a data-p="hw" class="on">💻 Компьютер</a><a data-p="env">🧰 Окружение</a><a data-p="model">🧠 Модель</a><a data-p="data">📚 Данные</a>
+<a data-p="hw" class="on">💻 Компьютер</a><a data-p="env">🧰 Окружение</a><a data-p="model">🧠 Модель</a><a data-p="own">🌱 Своя модель</a><a data-p="data">📚 Данные</a>
 <a data-p="train">🏋️ Обучение</a><a data-p="result">📦 Результат</a><a data-p="chat">💬 Проверка в чате</a><a data-p="jobs">📜 Журнал</a><a data-p="help">❓ Справка</a>
 </nav><div id="side-info"></div></aside>
 <main>
@@ -15,6 +15,25 @@
 <div class="row"><input id="model-id" placeholder="Имя модели на Hugging Face" style="flex:1"><button onclick="pickModel(document.getElementById('model-id').value,0)">Выбрать</button></div>
 <div id="model-list"></div></section>
 
+
+<section id="own" class="page"><h1>Своя модель: Ivan GPT, рост, создание с нуля</h1>
+<div class="cards">
+<div class="card"><h3>🔑 Ключи доступа</h3><p class="hint">Хранятся только на этом компьютере, зашифрованы Windows (safeStorage). В интерфейс и в файлы не попадают.</p>
+<label>GitHub-токен (для приватного Ivan GPT) <input id="o-gh" type="password" placeholder="ghp_… или github_pat_…"></label><small id="o-gh-st"></small>
+<label>Hugging Face токен (для закрытых наборов, необязательно) <input id="o-hf" type="password" placeholder="hf_…"></label><small id="o-hf-st"></small>
+<div class="row"><button onclick="saveSecrets()">Сохранить</button><button onclick="clearSecrets()">Удалить ключи</button></div></div>
+<div class="card"><h3>🤖 Ivan GPT</h3><p class="hint">Скачать веса из релиза и перенести без потерь в формат Hugging Face (проверка по логитам).</p>
+<label>Релиз <select id="o-tag"><option value="">— нажмите «Обновить список» —</option></select></label>
+<label>Архитектура <select id="o-iarch"><option value="llama">Llama (рекомендуется)</option><option value="qwen2">Qwen2 (тоже без потерь)</option></select></label>
+<div class="row"><button onclick="ivanList()">Обновить список</button><button class="big" onclick="ivanFetch()">Скачать и перенести</button></div>
+<hr><div class="row"><button onclick="ivanLocal('weights')">Уже скачанный файл…</button><button onclick="ivanLocal('dir')">Папка…</button></div>
+<small id="o-ivan-st"></small></div>
+</div>
+<h2>Мои модели</h2><div id="o-models"><p class="hint">Пока нет.</p></div>
+<div id="o-panel"></div>
+<h2>➕ Создать новую модель</h2><div class="card" id="o-new"></div>
+<h2>📥 Источники данных для предобучения</h2><p class="hint">Только открытые источники; лицензия указана у каждого. Данные идут потоком, чистятся, без повторов, с фильтром языка и лимитом, и сразу токенизируются в .bin.</p><div id="o-src"></div>
+</section>
 <section id="data" class="page"><h1>Данные для обучения</h1>
 <div class="cards">
 <div class="card"><h3>1. Скачать из интернета</h3><input id="dl-url" placeholder="Ссылка на файл или архив (zip, tar.gz, jsonl…)"><input id="dl-sha" placeholder="SHA-256 (необязательно)">
@@ -61,5 +80,6 @@
 <p><b>Большие модели (70B+) и мощные компьютеры.</b> Укажите число видеокарт — программа запустит обучение через Accelerate на всех картах. На Linux-сервере можно запустить тот же train.py: <code>accelerate launch --num_processes 8 train.py папка_запуска</code>.</p>
 <p><b>Пауза</b> сохраняет контрольную точку; «Продолжить» начинает с неё, даже после перезапуска программы.</p>
 <p><b>Loss</b> — ошибка модели на ваших данных. Должна снижаться. Если падает почти до нуля — модель «зубрит», уменьшите эпохи.</p>
+<p><b>Своя модель.</b> Ivan GPT переносится в Llama/Qwen2 точно (проверяется по логитам). «Увеличить» добавляет слои (новые слои — тождественные), ширину, FFN и контекст, не меняя ответов модели; после этого нужно полное обучение. Новая модель с нуля: архитектура → размер → токенизатор → данные → предобучение. MoE (смесь экспертов): всего параметров больше, но на каждый токен работают только top-k экспертов.</p>
 <p><b>Для телефона</b> берите GGUF Q4_K_M: модель 0.5B ≈ 0.4 ГБ, 3B ≈ 2 ГБ, 7B ≈ 4.7 ГБ.</p></div></section>
-</main><script src="app.js"></script></body></html>
+</main><script src="app.js"></script><script src="own.js"></script></body></html>

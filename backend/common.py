@@ -13,7 +13,7 @@ def default_home():
     return os.path.join(os.path.expanduser('~'), 'uchitel-data')
 
 HOME = default_home()
-DIRS = {k: os.path.join(HOME, k) for k in ('hf', 'downloads', 'datasets', 'runs', 'exports', 'tools', 'tmp', 'logs')}
+DIRS = {k: os.path.join(HOME, k) for k in ('hf', 'downloads', 'datasets', 'runs', 'exports', 'tools', 'tmp', 'logs', 'models')}
 for d in DIRS.values():
     os.makedirs(d, exist_ok=True)
 
@@ -22,6 +22,7 @@ def child_env():
     e.update(HF_HOME=DIRS['hf'], TMP=DIRS['tmp'], TEMP=DIRS['tmp'], TMPDIR=DIRS['tmp'],
              PYTHONIOENCODING='utf-8', PYTHONUTF8='1', HF_HUB_DISABLE_SYMLINKS_WARNING='1',
              PIP_DISABLE_PIP_VERSION_CHECK='1', TOKENIZERS_PARALLELISM='false')
+    if os.name == 'nt': e['USE_LIBUV'] = '0'   # torchrun в Windows: PyTorch собран без libuv
     return e
 
 def decode(b):

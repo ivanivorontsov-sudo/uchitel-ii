@@ -15,6 +15,8 @@ PKGS = [  # модуль, pip-имя, зачем, обязателен
     ('pypdf', 'pypdf', 'Чтение PDF', True),
     ('docx', 'python-docx', 'Чтение DOCX', True),
     ('google.protobuf', 'protobuf', 'Protobuf — нужен некоторым токенизаторам', True),
+    ('psutil', 'psutil', 'psutil — память компьютера (оценка размеров)', True),
+    ('zstandard', 'zstandard', 'Распаковка архивов .zst', False),
     ('trl', 'trl', 'TRL — дополнительные методы обучения', False),
     ('bitsandbytes', 'bitsandbytes', 'bitsandbytes — 4-битный QLoRA (только с NVIDIA)', False),
 ]

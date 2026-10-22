@@ -278,7 +278,11 @@ def t_gguf(p):
         if pr.wait() != 0: raise SystemExit(f'{what} — ошибка (код {pr.returncode}). Подробности выше.')
     # встроенный Python не читает PYTHONPATH — подключаем gguf-py и conversion из llama.cpp явно
     boot = ('import sys,runpy;c=sys.argv[1];d=__import__("os").path.dirname(c);sys.path[:0]=[d,d+"/gguf-py"];'
-            'sys.argv=sys.argv[1:];runpy.run_path(c,run_name="__main__")')
+            'sys.argv=sys.argv[1:];import os\n'
+            # SentencePiece-токенизатор у Qwen-MoE (своя модель): llama.cpp по умолчанию ждёт BPE Qwen — берём ветку SentencePiece
+            'if os.path.exists(os.path.join(sys.argv[1],"tokenizer.model")):\n'
+            ' try:\n  import conversion.qwen as q;q.Qwen2MoeModel.set_vocab=q.Qwen2Model.set_vocab\n except Exception: pass\n'
+            'runpy.run_path(c,run_name="__main__")')
     sh([sys.executable, '-c', boot, conv, src, '--outfile', f16, '--outtype', 'f16'], 'Конвертирую в GGUF (f16)…')
     emit(progress=0.6, text='сжатие')
     final = f16
@@ -301,6 +305,94 @@ def t_pip(p):
             if attempt == 2: raise SystemExit('Установка не удалась (подробности выше). Проверьте интернет/антивирус и нажмите ещё раз.')
             log('Ошибка, пробую ещё раз через 5 секунд…'); time.sleep(5)
     log('Установлено. Нажмите «Проверить снова».'); emit(result={})
+
+
+# ---------- Ivan GPT и свои модели ----------
+def _mdir(name): 
+    d = os.path.join(DIRS['models'], re.sub(r'[^A-Za-z0-9._-]', '_', name)); return d
+def _verify_ivan(src, tok, out):
+    import torch, ivangpt as I
+    sd, c, _ = I.load_ivan(src, tok)
+    import sentencepiece as spm
+    sp = spm.SentencePieceProcessor(model_file=os.path.join(out, 'tokenizer.model'))
+    ids = [sp.encode('Человек: Привет! Расскажи про Москву.\nИИ: Москва — столица России, крупнейший город страны.')]
+    r = I.compare(I.hf_logits(out, ids), I.ivan_reference(sd, c)(torch.tensor(ids)))
+    log(f"Проверка переноса: макс. разница логитов {r['max_abs']:.2e}, совпадение лучшего токена {r['argmax_same']*100:.0f}%")
+    if r['max_abs'] > 1e-3 or r['argmax_same'] < 1: raise SystemExit('Перенос неточный — модель не сохранена как рабочая.')
+    return r
+def t_ivan_import(p):
+    """Скачанные файлы релиза (apk/zip/safetensors) или выбранная папка → модель HF (Llama или Qwen2) с проверкой логитов."""
+    import ivangpt as I
+    arch = p.get('arch', 'llama'); src = p['src']; tok = p.get('tok')
+    out = _mdir(p.get('name') or f'ivan-gpt-{p.get("tag","local")}-{arch}')
+    log(f'Переношу Ivan GPT в {I.ARCHS[arch]["name"]} без потерь…'); emit(progress=0.2, text='перенос')
+    I.convert_ivan(src, out, arch, tok_path=tok)
+    emit(progress=0.7, text='проверка'); r = _verify_ivan(src, tok, out)
+    log(f'Готово: {out}'); emit(result={'path': out, 'check': r})
+def t_grow(p):
+    import ivangpt as I
+    out = _mdir(p['name']); log('Увеличиваю модель с сохранением её знаний…')
+    r = I.grow(p['src'], out, layers=p.get('layers'), dim=p.get('dim'), hidden=p.get('hidden'), heads=p.get('heads'), ctx=p.get('ctx'))
+    emit(progress=0.8, text='проверка')
+    chk = _same_function(p['src'], out); r['check'] = chk
+    log(f"Было {r['params_before']/1e6:.1f} млн параметров, стало {r['params_after']/1e6:.1f} млн. Loss на проверочном тексте: до {chk['loss_before']:.4f}, после {chk['loss_after']:.4f}.")
+    emit(result={'path': out, **r})
+def _same_function(a, b):
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    tk = AutoTokenizer.from_pretrained(a)
+    x = tk('Москва — столица России. Человек: Как дела?\nИИ: Хорошо, спасибо! Река Волга впадает в Каспийское море.', return_tensors='pt')['input_ids']
+    res = {}
+    for k, d in (('before', a), ('after', b)):
+        m = AutoModelForCausalLM.from_pretrained(d, dtype=torch.float32).eval()
+        with torch.no_grad(): o = m(x); res[k] = o.logits; res['loss_' + k] = float(torch.nn.functional.cross_entropy(o.logits[0, :-1], x[0, 1:]))
+        del m
+    res['max_abs'] = float((res.pop('before') - res.pop('after')).abs().max()); return res
+def t_upcycle(p):
+    import ivangpt as I
+    out = _mdir(p['name']); log('Превращаю плотную модель в смесь экспертов (MoE)…')
+    r = I.upcycle(p['src'], out, experts=int(p.get('experts', 8)), topk=int(p.get('topk', 2)), noise=float(p.get('noise', 0.01)))
+    chk = _same_function(p['src'], out); r['check'] = chk
+    log(f"Всего параметров {r['params_total']/1e6:.1f} млн, активных на токен {r['params_active']/1e6:.1f} млн. Loss до {chk['loss_before']:.4f}, после {chk['loss_after']:.4f}.")
+    emit(result={'path': out, **r})
+def t_new_model(p):
+    import ivangpt as I
+    out = _mdir(p['name']); tk = p.get('tokenizer', 'ivan')
+    if tk == 'train':
+        import sources as S
+        tdir = os.path.join(out, '_tok'); log(f'Обучаю токенизатор на ваших данных (словарь {p.get("vocab", 16000)})…')
+        def texts():
+            for path in p['datasets']:
+                for l in open(path, encoding='utf-8'):
+                    d = json.loads(l); yield d.get('text') or '\n'.join(m['content'] for m in d.get('messages', []))
+        I.train_tokenizer(texts(), tdir, int(p.get('vocab', 16000))); tok_dir = tdir
+    elif tk == 'qwen':
+        tok_dir = 'Qwen/Qwen2.5-0.5B'; log('Беру токенизатор Qwen (словарь 151 тыс.; первый раз скачивается с Hugging Face).')
+    else:
+        tok_dir = p.get('ivan_dir') or (sorted(glob.glob(os.path.join(DIRS['models'], 'ivan-gpt-*')) or [None])[0])
+        if not tok_dir: raise SystemExit('Сначала скачайте Ivan GPT (нужен её токенизатор) или выберите другой токенизатор.')
+    s = p['size']; emit(progress=0.4, text='создаю скелет')
+    n = I.new_model(out, p['arch'], int(s['layers']), int(s['dim']), int(s['hidden']), int(s['heads']), int(s.get('kv_heads') or s['heads']),
+                    int(p.get('ctx', 1024)), tok_dir, experts=int(p.get('experts', 8)), topk=int(p.get('topk', 2)))
+    if os.path.isdir(os.path.join(out, '_tok')): shutil.rmtree(os.path.join(out, '_tok'))
+    log(f'Скелет создан: {n/1e6:.1f} млн параметров со случайными весами — {out}'); emit(result={'path': out, 'params': n})
+def t_tokenize(p):
+    import sources as S
+    out = p.get('out') or os.path.join(DIRS['datasets'], '_bin', re.sub(r'[^A-Za-z0-9._-]', '_', os.path.basename(p['model'].rstrip('/\\'))) + '_' + hashlib.sha1('|'.join(p['datasets']).encode()).hexdigest()[:8])
+    log('Токенизирую данные в .bin (несколько процессов)…'); m = S.tokenize_jsonl(p['datasets'], p['model'], out, emit)
+    log(f"Готово: {m['train_tokens']/1e6:.2f} млн токенов для обучения, {m['val_tokens']/1e3:.0f} тыс. для проверки."); emit(result={'path': out, **m})
+def t_collect(p):
+    import sources as S
+    r = S.collect(p, emit); st = r['stats']
+    log(f"Готово: текстов {st['texts']}, повторов убрано {st['dupes']}, коротких {st['short']}, не тот язык {st['lang']}" + (f", токенов {r['tokens']['train_tokens']/1e6:.1f} млн" if r.get('tokens') else ''))
+    emit(result=r)
+def t_ivan_export(p):
+    import ivangpt as I
+    out = os.path.join(DIRS['exports'], 'ivan-gpt-format', re.sub(r'[^A-Za-z0-9._-]', '_', p.get('name') or 'model'))
+    r = I.export_ivan(p['model_dir'], out)
+    if not r['standard_size']: log('Размер отличается от исходной Ivan GPT: веб-движок (web/engine.js) читает размер из config.json и работает; generate.py из репозитория ivan-gpt создаёт модель стандартного размера (Config()) — для нового размера нужна правка generate.py: GPT(Config(**json.load(open("config.json")))).')
+    if r['eps_note']: log('Внимание: у расширенной модели eps нормализации пересчитан; движки Ivan GPT используют 1e-5 — разница в ответах минимальна.')
+    log(f'Сохранено в формате Ivan GPT: {out}'); emit(result=r)
 
 if __name__ == '__main__':
     kind, pf = sys.argv[1], sys.argv[2]

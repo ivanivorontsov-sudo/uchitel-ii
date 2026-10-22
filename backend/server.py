@@ -1,5 +1,5 @@
 # Локальный сервер «Учитель ИИ»: API + интерфейс. Слушает только 127.0.0.1.
-import os, sys, json, time, uuid, threading, subprocess, tempfile, glob, shutil, mimetypes
+import os, sys, json, time, math, uuid, threading, subprocess, tempfile, glob, shutil, mimetypes
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -60,6 +60,36 @@ def task(kind, params, title):
     pf = os.path.join(DIRS['tmp'], f'{kind}_{uuid.uuid4().hex[:6]}.json')
     json.dump(params, open(pf, 'w', encoding='utf-8'), ensure_ascii=False)
     return Job(kind, [sys.executable, '-u', os.path.join(HERE, 'tasks.py'), kind, pf], title)
+
+def start_pretrain(cfg):
+    run = cfg.get('run') or os.path.join(DIRS['runs'], time.strftime('%Y%m%d-%H%M%S') + '-full')
+    os.makedirs(run, exist_ok=True)
+    try: os.remove(os.path.join(run, 'PAUSE'))
+    except OSError: pass
+    cfg['run'] = run; cfg['engine'] = 'pretrain'; cfg.setdefault('method', 'full')
+    json.dump(cfg, open(os.path.join(run, 'config.json'), 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
+    n = int(cfg.get('gpus', 1) or 1); script = os.path.join(HERE, 'pretrain.py')
+    cmd = [sys.executable, '-m', 'torch.distributed.run', '--standalone', '--nproc_per_node', str(n), script, run] if n > 1 else [sys.executable, '-u', script, run]
+    return Job('train', cmd, 'Полное обучение ' + os.path.basename(cfg['model'].rstrip('/\\')), run)
+
+def list_models():
+    res = []
+    for d in sorted(glob.glob(os.path.join(DIRS['models'], '*'))) + [os.path.join(r, 'full') for r in sorted(glob.glob(os.path.join(DIRS['runs'], '*')))]:
+        cf = os.path.join(d, 'config.json')
+        if not os.path.exists(cf): continue
+        try:
+            c = json.load(open(cf, encoding='utf-8')); m = json.load(open(os.path.join(d, 'uchitel.json'), encoding='utf-8')) if os.path.exists(os.path.join(d, 'uchitel.json')) else {}
+        except Exception: continue
+        import ivangpt as I
+        L, D, F, H = c.get('num_hidden_layers'), c.get('hidden_size'), c.get('intermediate_size') or c.get('moe_intermediate_size'), c.get('num_attention_heads')
+        if not (L and D and F and H): continue
+        E = c.get('num_local_experts') or c.get('num_experts') or 0; K = c.get('num_experts_per_tok') or 0; KV = c.get('num_key_value_heads') or H
+        hd = c.get('head_dim') or D // H; V = c.get('vocab_size')
+        res.append({'path': d, 'name': os.path.basename(d) if not d.endswith('full') else os.path.basename(os.path.dirname(d)) + ' (обучена)', 'arch': c.get('model_type'),
+                    'layers': L, 'dim': D, 'hidden': F, 'heads': H, 'kv_heads': KV, 'ctx': c.get('max_position_embeddings'), 'vocab': V, 'experts': E, 'topk': K,
+                    'params': I.count_params(L, D, F, H, KV, V, hd, c.get('model_type'), E, K), 'active': I.count_params(L, D, F, H, KV, V, hd, c.get('model_type'), E, K, True) if E else None,
+                    'from': m.get('from'), 'history': m.get('history', [])})
+    return res
 
 def start_train(cfg):
     run = cfg.get('run') or os.path.join(DIRS['runs'], time.strftime('%Y%m%d-%H%M%S'))
@@ -127,6 +157,10 @@ class H(BaseHTTPRequestHandler):
                 return s.send([{'path': f, 'size': os.path.getsize(f)} for f in sorted(glob.glob(os.path.join(DIRS['exports'], '*.gguf')))])
             if p == '/api/preview':
                 f = q['path'][0]; return s.send([json.loads(l) for _, l in zip(range(int(q.get('n', ['8'])[0])), open(f, encoding='utf-8'))])
+            if p == '/api/models': return s.send(list_models())
+            if p == '/api/catalog':
+                import ivangpt as I, sources as S
+                return s.send({'archs': I.ARCHS, 'sizes': [dict(zip(('label', 'layers', 'dim', 'hidden', 'heads', 'kv_heads'), x)) for x in I.SIZES], 'sources': S.CATALOG})
             if p == '/api/info': return s.send({'home': HOME, 'dirs': DIRS, 'free_gb': round(free_gb(), 1), 'python': sys.executable})
             # статика интерфейса
             f = os.path.normpath(os.path.join(UI, (p.lstrip('/') or 'index.html')))
@@ -154,12 +188,32 @@ class H(BaseHTTPRequestHandler):
             if p == '/api/pause':
                 j = JOBS[d['id']]; open(os.path.join(j.run, 'PAUSE'), 'w').close(); return s.send({'ok': True})
             if p == '/api/resume':
-                cfg = json.load(open(os.path.join(d['run'], 'config.json'), encoding='utf-8')); cfg['resume'] = True; return s.send(start_train(cfg).info())
+                cfg = json.load(open(os.path.join(d['run'], 'config.json'), encoding='utf-8')); cfg['resume'] = True
+                return s.send((start_pretrain if cfg.get('engine') == 'pretrain' else start_train)(cfg).info())
             if p == '/api/stop':
                 j = JOBS[d['id']]; j.killed = True
                 if os.name == 'nt': subprocess.run(['taskkill', '/PID', str(j.p.pid), '/T', '/F'], capture_output=True, creationflags=0x08000000)
                 else: j.p.kill()
                 return s.send({'ok': True})
+            if p == '/api/plan2':   # оценки памяти/времени для размеров (рост или новая модель)
+                import ivangpt as I
+                hw = hardware.detect(); hw['disk_free_gb'] = round(free_gb(), 1)
+                r = I.plan(hw, int(d.get('vocab', 8000)), d.get('base'), d.get('tokens'))
+                if d.get('custom'):   # любые размеры, без ограничений — только предупреждение
+                    c = d['custom']; arch = d.get('arch', 'llama'); E = int(d.get('experts', 0) or 0); K = int(d.get('topk', 0) or 0)
+                    N = I.count_params(int(c['layers']), int(c['dim']), int(c['hidden']), int(c['heads']), int(c.get('kv_heads') or c['heads']), int(d.get('vocab', 8000)), 64, arch, E, K)
+                    Na = I.count_params(int(c['layers']), int(c['dim']), int(c['hidden']), int(c['heads']), int(c.get('kv_heads') or c['heads']), int(d.get('vocab', 8000)), 64, arch, E, K, True) if E else N
+                    b = r['budget']; mem = I.train_mem_gb(N, int(c['layers']), int(c['dim']), int(d.get('vocab', 8000)), device=b['device'])
+                    tok = float(d.get('tokens') or 20 * Na); sec = 6 * Na * tok / (b['tflops'] * 1e12 * b['mfu'])
+                    r['custom'] = {'params': N, 'active': Na, 'mem_gb': round(mem, 1), 'fits': mem <= r['limit_gb'], 'hours': round(sec / 3600, 1), 'tokens': tok,
+                                   'ram_gb_offload': round(N * 16 / 1e9, 1), 'disk_gb': round(N * 16 / 1e9 + N * 4 / 1e9, 1),
+                                   'gpus_needed': max(1, math.ceil(mem / max(1, b['mem_gb'] * 0.85))) if b['device'] == 'gpu' else None}
+                return s.send(r)
+            if p == '/api/ivan/task':   # ivan_import, grow, upcycle, new_model, tokenize, collect, ivan_export
+                k = d.pop('kind'); assert k in ('ivan_import', 'grow', 'upcycle', 'new_model', 'tokenize', 'collect', 'ivan_export')
+                return s.send(task(k, d, {'ivan_import': 'Ivan GPT: перенос', 'grow': 'Увеличение модели', 'upcycle': 'Апсайклинг в MoE', 'new_model': 'Новая модель',
+                                          'tokenize': 'Токенизация в .bin', 'collect': 'Сбор данных: ' + d.get('source', ''), 'ivan_export': 'Экспорт в формат Ivan GPT'}[k]).info())
+            if p == '/api/pretrain': return s.send(start_pretrain(d).info())
             if p == '/api/merge': return s.send(task('merge', d, 'Слияние LoRA').info())
             if p == '/api/gguf': return s.send(task('gguf', d, 'Экспорт GGUF').info())
             if p == '/api/chat': return s.send({'text': chat(d['model'], d['messages'], d.get('max_new', 200), float(d.get('temp', 0.7)))})

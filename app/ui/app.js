@@ -6,7 +6,7 @@ const say=m=>alert(m);
 let HW=null, ST={model:localStorage.model||'Qwen/Qwen2.5-0.5B-Instruct', method:localStorage.method||'', trainJob:_q.get('job')||localStorage.trainJob||'', run:localStorage.run||''};
 const METH={full:'Полное обучение',lora:'LoRA',qlora:'QLoRA 4 бита',cpu:'Процессор (LoRA)'};
 document.querySelectorAll('nav a').forEach(a=>a.onclick=()=>show(a.dataset.p));
-function show(p){document.querySelectorAll('nav a').forEach(x=>x.classList.toggle('on',x.dataset.p===p));document.querySelectorAll('.page').forEach(x=>x.classList.toggle('on',x.id===p));({env:loadEnv,data:loadDs,train:loadTrain,result:loadRuns,chat:loadChat,jobs:loadJobs,model:renderModels})[p]?.()}
+function show(p){document.querySelectorAll('nav a').forEach(x=>x.classList.toggle('on',x.dataset.p===p));document.querySelectorAll('.page').forEach(x=>x.classList.toggle('on',x.id===p));({env:loadEnv,data:loadDs,train:loadTrain,result:loadRuns,chat:loadChat,jobs:loadJobs,model:renderModels,own:()=>loadOwn()})[p]?.()}
 
 async function loadHw(){HW=await api('hw');const g=HW.gpus;
  $('hw-box').innerHTML=`<div class="kv"><b>Система</b><span>${esc(HW.os)}</span><b>Процессор</b><span>${esc(HW.cpu)}, ядер: ${HW.cores}</span>
@@ -61,7 +61,7 @@ async function stopTrain(){if(ST.trainJob&&confirm('Остановить обу�
 async function resumeTrain(){if(!ST.run)return say('Нет обучения для продолжения');const j=await api('resume',{run:ST.run});ST.trainJob=localStorage.trainJob=j.id;pollTrain()}
 let pt=null;function pollTrain(){clearInterval(pt);const f=async()=>{let j;try{j=await api('job?id='+ST.trainJob)}catch{clearInterval(pt);return}
  const L=j.last||{};const eta=L.eta?` · осталось ≈ ${Math.floor(L.eta/60)} мин ${L.eta%60} с`:'';
- $('t-status').textContent=({running:'Идёт обучение',done:'✓ Обучение завершено',paused:'⏸ На паузе',stopped:'Остановлено',error:'✗ Ошибка: '+(j.error||'')}[j.state])+(L.step?` · шаг ${L.step}/${L.max_steps} · эпоха ${L.epoch}`:'')+(L.loss!=null?` · loss ${(+L.loss).toFixed(3)}`:'')+eta;
+ $('t-status').textContent=({running:'Идёт обучение',done:'✓ Обучение завершено',paused:'⏸ На паузе',stopped:'Остановлено',error:'✗ Ошибка: '+(j.error||'')}[j.state])+(L.step?` · шаг ${L.step}/${L.max_steps} · эпоха ${L.epoch}`:'')+(L.loss!=null?` · loss ${(+L.loss).toFixed(3)}`:'')+(L.tok_s?` · ${L.tok_s.toLocaleString('ru')} ток/с · съедено ${(100*L.eaten).toFixed(1)}% данных`:'')+eta;
  $('t-bar').style.width=(100*(j.progress||0))+'%';$('t-log').textContent=j.logs.slice(-60).join('\n');$('t-log').scrollTop=1e9;chart(j.points);if(j.state!=='running')clearInterval(pt)};f();pt=setInterval(f,1500)}
 function chart(pts){const c=$('loss'),x=c.getContext('2d'),W=c.width,H=c.height;x.clearRect(0,0,W,H);x.font='12px Segoe UI';x.fillStyle='#5b6b60';
  const tr=pts.filter(p=>p.loss!=null),ev=pts.filter(p=>p.eval_loss!=null);if(!tr.length){x.fillText('График ошибки (loss) появится после первых шагов',20,30);return}

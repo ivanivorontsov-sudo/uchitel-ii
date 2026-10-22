@@ -13,8 +13,9 @@ from datasets import load_dataset
 from transformers import (AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments, TrainerCallback, DataCollatorForLanguageModeling)
 
 method = CFG['method']; cuda = torch.cuda.is_available()
-if method != 'cpu' and not cuda:
-    log('Видеокарта недоступна PyTorch — переключаюсь на обучение на процессоре.'); method = 'cpu'
+if method in ('lora', 'qlora') and not cuda:
+    log('Видеокарта недоступна PyTorch — переключаюсь на LoRA на процессоре.'); method = 'cpu'
+if method == 'full' and not cuda: log('Полное обучение на процессоре — подходит только для маленьких моделей (до ~100 млн параметров).')
 bf16 = cuda and torch.cuda.is_bf16_supported(); fp16 = cuda and not bf16
 dtype = torch.bfloat16 if bf16 else torch.float16 if fp16 else torch.float32
 log(f"Модель: {CFG['model']}, метод: {method}, устройство: {torch.cuda.get_device_name(0) if cuda else 'процессор'}")
@@ -92,7 +93,20 @@ ck = sorted(glob.glob(os.path.join(RUN, 'checkpoints', 'checkpoint-*')), key=lam
 if ck and CFG.get('resume', True):
     log(f'Продолжаю с контрольной точки {os.path.basename(ck[-1])}')
 log('Обучение началось.')
-tr.train(resume_from_checkpoint=ck[-1] if ck and CFG.get('resume', True) else None)
+try:
+    tr.train(resume_from_checkpoint=ck[-1] if ck and CFG.get('resume', True) else None)
+except torch.cuda.OutOfMemoryError:
+    if int(CFG.get('batch', 1)) <= 1: raise SystemExit('Не хватило видеопамяти. Выберите способ экономнее (QLoRA) или модель меньше.')
+    torch.cuda.empty_cache(); CFG['batch'] = max(1, int(CFG['batch']) // 2); CFG['grad_accum'] = int(CFG.get('grad_accum', 4)) * 2
+    json.dump(CFG, open(os.path.join(RUN, 'config.json'), 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
+    log(f"Не хватило видеопамяти — один раз уменьшаю пачку до {CFG['batch']} (накопление {CFG['grad_accum']}), размер шага тот же. Продолжаю с последней контрольной точки.")
+    A.update(per_device_train_batch_size=CFG['batch'], gradient_accumulation_steps=CFG['grad_accum'])
+    args = TrainingArguments(**{k: v for k, v in A.items() if k in _ok})
+    tr = Trainer(model=model, args=args, train_dataset=split['train'] if split else ds, eval_dataset=split['test'] if split else None,
+                 data_collator=DataCollatorForLanguageModeling(tok, mlm=False), callbacks=[Progress()])
+    ck = sorted(glob.glob(os.path.join(RUN, 'checkpoints', 'checkpoint-*')), key=lambda p: int(p.rsplit('-', 1)[1]))
+    try: tr.train(resume_from_checkpoint=ck[-1] if ck else None)
+    except torch.cuda.OutOfMemoryError: raise SystemExit('Не хватило видеопамяти и после уменьшения пачки. Выберите QLoRA или модель меньше.')
 if os.path.exists(os.path.join(RUN, 'PAUSE')):
     emit(paused=True); log('Обучение на паузе. Нажмите «Продолжить», чтобы продолжить с этого места.'); sys.exit(0)
 if RANK0:

@@ -1,5 +1,6 @@
 // «Учитель ИИ» — оболочка Electron. Ставит встроенный Python в ASCII-папку и запускает локальный сервер.
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, safeStorage } = require('electron');
+const gh = require('./github');
 const fs = require('fs'), path = require('path'), https = require('https'), cp = require('child_process'), net = require('net');
 const PY_VER = '3.12.10';
 const PY_URL = `https://www.python.org/ftp/python/${PY_VER}/python-${PY_VER}-embed-amd64.zip`;
@@ -84,7 +85,7 @@ async function bootstrap() {
   return true;
 }
 function pyEnv() { const t = path.join(HOME, 'tmp'); fs.mkdirSync(t, { recursive: true });
-  return { ...process.env, UCHITEL_HOME: HOME, UCHITEL_UI: path.join(APPDIR, 'ui'), PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8', TMP: t, TEMP: t, HF_HOME: path.join(HOME, 'hf'), PYTHONNOUSERSITE: '1' } }
+  return { ...process.env, UCHITEL_HOME: HOME, UCHITEL_UI: path.join(APPDIR, 'ui'), PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8', TMP: t, TEMP: t, HF_HOME: path.join(HOME, 'hf'), PYTHONNOUSERSITE: '1', ...(getSecret('hf') ? { HF_TOKEN: getSecret('hf') } : {}) } }
 function freePort() { return new Promise(ok => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => ok(p)) }) }) }
 async function startServer() {
   port = await freePort();
@@ -109,9 +110,20 @@ async function main() {
   } catch (e) { log('boot error: ' + e.stack); send('boot-error', String(e.message || e)) }
 }
 ipcMain.handle('pick', async (_, kind) => { const r = await dialog.showOpenDialog(win, { properties: kind === 'dir' ? ['openDirectory', 'multiSelections'] : ['openFile', 'multiSelections'],
-  filters: kind === 'dir' ? [] : [{ name: 'Данные', extensions: ['txt', 'md', 'pdf', 'docx', 'csv', 'tsv', 'json', 'jsonl', 'zip', 'html'] }, { name: 'Все', extensions: ['*'] }] }); return r.canceled ? [] : r.filePaths });
+  filters: kind === 'dir' ? [] : kind === 'weights' ? [{ name: 'Веса Ivan GPT', extensions: ['safetensors', 'zip', 'apk', 'bin'] }, { name: 'Все', extensions: ['*'] }] : [{ name: 'Данные', extensions: ['txt', 'md', 'pdf', 'docx', 'csv', 'tsv', 'json', 'jsonl', 'zip', 'html'] }, { name: 'Все', extensions: ['*'] }] }); return r.canceled ? [] : r.filePaths });
 ipcMain.handle('open', (_, u) => /^https:\/\//.test(u) && shell.openExternal(u));
 ipcMain.handle('reveal', (_, p) => shell.showItemInFolder(p));
+// ---- секреты: GitHub и Hugging Face токены, зашифрованы safeStorage (DPAPI в Windows), лежат только на этом компьютере ----
+const secretFile = k => path.join(app.getPath('userData'), k + '.secret');
+function getSecret(k) { try { return safeStorage.decryptString(fs.readFileSync(secretFile(k))) } catch { return '' } }
+ipcMain.handle('secret-set', (_, k, v) => { if (!['github', 'hf'].includes(k)) return false;
+  if (!v) { fs.rmSync(secretFile(k), { force: true }); return true }
+  if (!safeStorage.isEncryptionAvailable()) throw new Error('Шифрование Windows недоступно — токен не сохранён.');
+  fs.writeFileSync(secretFile(k), safeStorage.encryptString(String(v).trim())); return true });
+ipcMain.handle('secret-has', (_, k) => !!getSecret(k));
+ipcMain.handle('ivan-releases', async () => { const t = getSecret('github'); if (!t) throw new Error('Введите GitHub-токен в настройках.'); return gh.releases(t) });
+ipcMain.handle('ivan-fetch', async (_, tag) => { const t = getSecret('github'); if (!t) throw new Error('Введите GitHub-токен в настройках.');
+  return gh.fetchIvan(t, tag, HOME, (text, p) => send('ivan-progress', { text, p })) });
 ipcMain.handle('retry', () => { app.relaunch(); app.exit(0) });
 app.setAppUserModelId('ru.vorontsov.uchitel');
 if (!app.requestSingleInstanceLock()) app.quit();
