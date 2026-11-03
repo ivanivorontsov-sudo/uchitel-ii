@@ -1,0 +1,51 @@
+name: Build Учитель ИИ (Windows)
+
+on:
+  push:
+    branches: [main, "fix/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-build:
+    name: Windows x64 installer and portable
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Run project checks
+        run: npm test
+
+      - name: Build Windows packages
+        run: npm run dist
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Upload installer and portable EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: UchitelII-Windows-x64
+          path: |
+            dist/*.exe
+          if-no-files-found: error
+          retention-days: 14
