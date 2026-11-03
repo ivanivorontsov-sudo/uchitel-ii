@@ -36,7 +36,7 @@ def detect():
     du = shutil.disk_usage(HOME)
     return {'os': f'{platform.system()} {platform.release()} ({platform.version()})', 'cpu': platform.processor() or platform.machine(),
             'cores': os.cpu_count(), 'ram_gb': round(tot, 1), 'ram_free_gb': round(av, 1), 'gpus': g, 'cuda_driver': cuda,
-            'disk_free_gb': round(du.free / 1e9, 1), 'home': HOME, 'recommend': recommend(g, tot)}
+            'disk_free_gb': round(du.free / 1e9, 1), 'home': HOME, 'recommend': recommend(g, av)}
 
 CATALOG = [  # id, параметров (млрд), описание
     ('Qwen/Qwen2.5-0.5B-Instruct', 0.5, 'Крошечная, понимает русский. Учится даже на процессоре.'),
@@ -58,11 +58,15 @@ def need_gb(b, method):
     return {'full': b * 16 + 2, 'lora': b * 2.2 + 2, 'qlora': b * 0.7 + 2, 'cpu': b * 5 + 2}[method]
 
 def pick(b, vram, ram):
-    if vram:
+    # TrainingArguments/Trainer currently use DDP, not model sharding:
+    # every GPU must hold a complete copy of the model. Use the least-free GPU,
+    # never the sum of VRAM across cards, to avoid impossible recommendations.
+    if vram > 0:
         for m in ('full', 'lora', 'qlora'):
-            if need_gb(b, m) <= vram * 0.92:
+            if need_gb(b, m) <= vram * 0.80:
                 return m
-    if b <= 1.6 and need_gb(b, 'cpu') <= ram * 0.7:
+    # RAM is the currently available memory, not installed physical RAM.
+    if b <= 1.6 and ram > 0 and need_gb(b, 'cpu') <= ram * 0.65:
         return 'cpu'
     return None
 
@@ -70,10 +74,13 @@ METHODS = {'full': 'Полное обучение (меняются все ве�
            'qlora': 'QLoRA 4 бита (экономит видеопамять)', 'cpu': 'На процессоре (медленно, только маленькие)'}
 
 def recommend(g, ram):
-    vram = sum(x['vram_gb'] for x in g) if len(g) > 1 else (g[0]['vram_gb'] if g else 0)
+    # DDP replicates the model on every GPU. The weakest/free-memory-lowest
+    # device determines whether a configuration fits.
+    per_gpu = min((x.get('free_gb', x.get('vram_gb', 0)) for x in g), default=0)
+    total = sum(x.get('vram_gb', 0) for x in g)
     out = []
     for mid, b, desc in CATALOG:
-        m = pick(b, vram, ram)
+        m = pick(b, per_gpu, ram)
         out.append({'id': mid, 'params_b': b, 'desc': desc, 'method': m, 'method_ru': METHODS.get(m, 'Не хватит памяти на этом ПК — нужен мощнее'),
                     'need': {k: round(need_gb(b, k), 1) for k in METHODS}})
-    return {'vram_total_gb': vram, 'models': out, 'multi_gpu': len(g) > 1}
+    return {'vram_total_gb': total, 'vram_per_gpu_free_gb': round(per_gpu, 1), 'models': out, 'multi_gpu': len(g) > 1}
