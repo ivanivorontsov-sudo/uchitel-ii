@@ -47,11 +47,24 @@ def fmt(ex):
         except Exception:
             return '\n'.join(f"{m['role']}: {m['content']}" for m in ex['messages']) + tok.eos_token
     return (ex.get('text') or '') + tok.eos_token
-ds = load_dataset('json', data_files=CFG['dataset'], split='train')
-if CFG.get('max_examples'): ds = ds.select(range(min(len(ds), int(CFG['max_examples']))))
-ds = ds.map(lambda b: tok([fmt(dict(zip(b, v))) for v in zip(*b.values())], truncation=True, max_length=ML), batched=True, remove_columns=ds.column_names)
-split = ds.train_test_split(test_size=min(0.05, max(1, len(ds)//20)/len(ds)), seed=42) if len(ds) >= 20 else None
-log(f'Примеров для обучения: {len(ds)}, длина до {ML} токенов')
+dataset_path = CFG.get('dataset')
+if not dataset_path or not os.path.isfile(dataset_path):
+    raise SystemExit(f'Файл обучающего набора не найден: {dataset_path!r}. Во вкладке «Данные» выберите или создайте JSONL-набор.')
+try:
+    ds = load_dataset('json', data_files=dataset_path, split='train')
+except Exception as e:
+    raise SystemExit(f'Не удалось прочитать набор данных ({type(e).__name__}: {e}). Проверьте JSONL: одна корректная запись на строку.')
+if len(ds) == 0:
+    raise SystemExit('Набор данных пуст. Добавьте примеры с полем text или messages.')
+if CFG.get('max_examples'):
+    ds = ds.select(range(min(len(ds), max(1, int(CFG['max_examples'])))))
+ds = ds.map(lambda b: tok([fmt(dict(zip(b, v))) for v in zip(*b.values())], truncation=True, max_length=ML),
+            batched=True, remove_columns=ds.column_names)
+ds = ds.filter(lambda row: len(row.get('input_ids') or []) >= 2)
+if len(ds) == 0:
+    raise SystemExit('После токенизации не осталось обучающих примеров. Проверьте поля text/messages и содержимое файлов.')
+split = ds.train_test_split(test_size=max(1, min(len(ds) - 1, int(len(ds) * 0.05))), seed=42) if len(ds) >= 20 else None
+log(f'Примеров для обучения: {len(ds)}, длина до {ML} токенов' + ('; есть отложенная проверка' if split else '; набор мал — отдельной проверочной части нет'))
 
 class Progress(TrainerCallback):
     def __init__(s): s.t0 = time.time()
