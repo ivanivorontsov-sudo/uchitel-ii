@@ -10,12 +10,37 @@ def log(t): emit(log=t)
 
 import torch
 from datasets import load_dataset
-from transformers import (AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments, TrainerCallback, DataCollatorForLanguageModeling)
+from transformers import (AutoConfig, AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments, TrainerCallback, DataCollatorForLanguageModeling)
 
 method = CFG['method']; cuda = torch.cuda.is_available()
 if method in ('lora', 'qlora') and not cuda:
     log('Видеокарта недоступна PyTorch — переключаюсь на LoRA на процессоре.'); method = 'cpu'
-if method == 'full' and not cuda: log('Полное обучение на процессоре — подходит только для маленьких моделей (до ~100 млн параметров).')
+if method == 'full' and not cuda:
+    # Full fine-tuning on CPU needs weights + gradients + two Adam states.
+    # Estimate on the meta device before loading real weights to avoid swapping
+    # the user's machine into an unusable state.
+    log('Проверяю, поместится ли полное обучение в доступную оперативную память…')
+    try:
+        import psutil
+        mc = AutoConfig.from_pretrained(CFG['model'], trust_remote_code=CFG.get('trust_remote_code', False))
+        with torch.device('meta'):
+            probe = AutoModelForCausalLM.from_config(mc, trust_remote_code=CFG.get('trust_remote_code', False))
+        params = sum(p.numel() for p in probe.parameters())
+        del probe
+        available = psutil.virtual_memory().available
+        required = int(params * 20)  # 16 bytes/parameter + 25% safety margin
+        log(f'Оценка: {params/1e6:.1f} млн параметров; доступно ОЗУ {available/2**30:.1f} ГБ; нужно около {required/2**30:.1f} ГБ.')
+        if required > available * 0.80:
+            raise SystemExit('Полное обучение не запускаю: недостаточно свободной ОЗУ, чтобы не зависла вся система. Выберите LoRA/CPU или меньшую модель.')
+    except SystemExit:
+        raise
+    except Exception as e:
+        log(f'Не удалось точно оценить память модели ({type(e).__name__}: {e}). Для безопасности полное обучение на CPU отменено; выберите LoRA/CPU.')
+        raise SystemExit(2)
+if method == 'qlora' and cuda:
+    import importlib.util
+    if importlib.util.find_spec('bitsandbytes') is None:
+        raise SystemExit('Для QLoRA не установлен bitsandbytes. Откройте «Окружение» и установите необязательный пакет bitsandbytes, затем повторите запуск.')
 bf16 = cuda and torch.cuda.is_bf16_supported(); fp16 = cuda and not bf16
 dtype = torch.bfloat16 if bf16 else torch.float16 if fp16 else torch.float32
 log(f"Модель: {CFG['model']}, метод: {method}, устройство: {torch.cuda.get_device_name(0) if cuda else 'процессор'}")
