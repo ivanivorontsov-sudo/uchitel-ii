@@ -14,16 +14,16 @@ class HardwareRecommendationTests(unittest.TestCase):
         # be treated as one 24 GB device.
         cards = [
             {"vram_gb": 12.0, "free_gb": 10.0},
-            {"vram_gb": 12.0, "free_gb": 9.0},
+            {"vram_gb": 12.0, "free_gb": 9.5},
         ]
         result = recommend(cards, 16.0)
         qwen7b = next(x for x in result["models"] if x["id"] == "Qwen/Qwen2.5-7B-Instruct")
         self.assertEqual(qwen7b["method"], "qlora")
         self.assertEqual(result["vram_total_gb"], 24.0)
-        self.assertEqual(result["vram_per_gpu_free_gb"], 9.0)
+        self.assertEqual(result["vram_per_gpu_free_gb"], 9.5)
 
     def test_uses_free_not_total_vram(self):
-        self.assertEqual(pick(3.0, vram=4.0, ram=32.0), "qlora")
+        self.assertEqual(pick(3.0, vram=6.0, ram=32.0), "qlora")
 
     def test_cpu_recommendation_uses_available_ram(self):
         self.assertIsNone(pick(0.5, vram=0.0, ram=3.0))
