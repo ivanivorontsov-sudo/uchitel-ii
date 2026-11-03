@@ -59,6 +59,25 @@ def batch(src, B, gen):
 # ---------- модель ----------
 from transformers import AutoModelForCausalLM, AutoConfig, AutoTokenizer
 mc = AutoConfig.from_pretrained(CFG['model'])
+if not cuda:
+    # Full pretraining keeps FP32 weights, gradients and Adam states in RAM.
+    # Estimate model size on the meta device before allocating real tensors.
+    log('Проверяю, поместится ли полное обучение в оперативную память…')
+    try:
+        import psutil
+        with torch.device('meta'):
+            probe = AutoModelForCausalLM.from_config(mc)
+        params = sum(p.numel() for p in probe.parameters())
+        del probe
+        available = psutil.virtual_memory().available
+        required = int(params * 20)  # weights + gradients + Adam states + 25% headroom
+        log(f'Оценка: {params/1e6:.1f} млн параметров; свободно {available/2**30:.1f} ГБ; нужно около {required/2**30:.1f} ГБ.')
+        if required > available * 0.80:
+            raise SystemExit('Полное предобучение не запускаю: недостаточно свободной ОЗУ. Выберите меньшую модель или используйте LoRA во вкладке «Обучение».')
+    except SystemExit:
+        raise
+    except Exception as e:
+        raise SystemExit(f'Не удалось безопасно оценить память модели ({type(e).__name__}: {e}). Полное предобучение на CPU отменено; выберите меньшую модель или LoRA.')
 log(f"Загружаю модель {mc.model_type}…")
 UM = os.path.join(CFG['model'], 'uchitel.json'); LAZY = os.path.exists(UM) and json.load(open(UM, encoding='utf-8')).get('lazy_init') and not os.path.exists(os.path.join(RUN, 'ckpt', 'state.pt'))
 if os.path.exists(UM) and json.load(open(UM, encoding='utf-8')).get('lazy_init'):
@@ -136,7 +155,9 @@ def lm_loss(x, m=None):
 # ---------- батч ----------
 B = int(CFG.get('batch', 0) or 0); TOK_STEP = int(CFG.get('tokens_per_step', 0) or 0)
 def autobatch():
-    if not cuda: return max(1, int(CFG.get('batch', 4) or 4))
+    # CPU memory is shared with the OS; start conservatively instead of
+    # allocating a large batch and forcing the machine into swap.
+    if not cuda: return max(1, int(CFG.get('batch', 1) or 1))
     b = 64
     while b > 1:
         try:
