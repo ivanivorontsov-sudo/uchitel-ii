@@ -9,6 +9,7 @@
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win nsis portable",
+    "dist:linux": "electron-builder --linux AppImage deb",
     "test": "node --check app/main.js && python -m compileall -q backend && python -m unittest discover -s tests -v"
   },
   "devDependencies": {
@@ -60,6 +61,18 @@
     },
     "portable": {
       "artifactName": "UchitelII-Portable-${version}.exe"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "app/icon.png",
+      "category": "科学",
+      "artifactName": "UchitelII-${version}-${arch}.${ext}",
+      "maintainer": "Воронцов Иван Игоревич",
+      "synopsis": "Локальное обучение языковых моделей",
+      "description": "Графическая программа для подготовки данных и дообучения открытых языковых моделей."
     },
     "publish": null
   },
