@@ -9,13 +9,26 @@ import hardware, envcheck
 HERE = os.path.dirname(os.path.abspath(__file__))
 UI = os.environ.get('UCHITEL_UI') or os.path.join(HERE, '..', 'app', 'ui')
 JOBS = {}
+ACTIVE_RUNS = set()
+ACTIVE_RUNS_LOCK = threading.Lock()
 
 class Job:
     def __init__(s, kind, cmd, title, run=None):
         s.id = uuid.uuid4().hex[:8]; s.kind = kind; s.title = title; s.run = run
         s.logs = []; s.points = []; s.state = 'running'; s.progress = 0; s.text = ''; s.result = None; s.error = None; s.t0 = time.time(); s.last = {}
-        s.p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=child_env(), cwd=HERE,
-                               creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        # Never allow two workers to write checkpoints into the same run directory.
+        if run:
+            with ACTIVE_RUNS_LOCK:
+                if run in ACTIVE_RUNS:
+                    raise RuntimeError('Это обучение уже запущено. Дождитесь завершения или остановите текущую задачу.')
+                ACTIVE_RUNS.add(run)
+        try:
+            s.p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=child_env(), cwd=HERE,
+                                   creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        except Exception:
+            if run:
+                with ACTIVE_RUNS_LOCK: ACTIVE_RUNS.discard(run)
+            raise
         mf = os.path.join(run, 'metrics.jsonl') if run else ''
         if mf and os.path.exists(mf):   # продолжение: показываем и прошлую часть графика
             for l in open(mf, encoding='utf-8'):
@@ -45,6 +58,8 @@ class Job:
             if m.get('paused'): s.state = 'paused'
             if 'error' in m: s.error = m['error']; s.add('ОШИБКА: ' + m['error'])
         code = s.p.wait()
+        if s.run:
+            with ACTIVE_RUNS_LOCK: ACTIVE_RUNS.discard(s.run)
         if getattr(s, 'killed', False): s.state = 'stopped'
         elif s.state != 'paused':
             s.state = 'done' if code == 0 and not s.error else 'error'
@@ -62,7 +77,7 @@ def task(kind, params, title):
     return Job(kind, [sys.executable, '-u', os.path.join(HERE, 'tasks.py'), kind, pf], title)
 
 def start_pretrain(cfg):
-    run = cfg.get('run') or os.path.join(DIRS['runs'], time.strftime('%Y%m%d-%H%M%S') + '-full')
+    run = cfg.get('run') or os.path.join(DIRS['runs'], time.strftime('%Y%m%d-%H%M%S') + '-full-' + uuid.uuid4().hex[:6])
     os.makedirs(run, exist_ok=True)
     try: os.remove(os.path.join(run, 'PAUSE'))
     except OSError: pass
@@ -92,7 +107,7 @@ def list_models():
     return res
 
 def start_train(cfg):
-    run = cfg.get('run') or os.path.join(DIRS['runs'], time.strftime('%Y%m%d-%H%M%S'))
+    run = cfg.get('run') or os.path.join(DIRS['runs'], time.strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:6])
     os.makedirs(run, exist_ok=True)
     try: os.remove(os.path.join(run, 'PAUSE'))
     except OSError: pass
