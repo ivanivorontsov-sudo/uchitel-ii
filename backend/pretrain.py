@@ -20,13 +20,39 @@ amp = torch.autocast('cuda', dtype=torch.bfloat16 if bf16 else torch.float16) if
 torch.manual_seed(int(CFG.get('seed', 42)) + RANK)
 
 # ---------- данные ----------
-D = CFG['data']; meta = json.load(open(os.path.join(D, 'meta.json')))
+D = os.path.abspath(CFG.get('data', ''))
+if not D or not os.path.isdir(D):
+    raise SystemExit(f'Папка токенизированных данных не найдена: {D!r}. Сначала подготовьте набор данных.')
+meta_path = os.path.join(D, 'meta.json')
+if not os.path.isfile(meta_path):
+    raise SystemExit(f'Не найден {meta_path}. Пересоздайте токенизированный набор.')
+with open(meta_path, encoding='utf-8') as mf:
+    meta = json.load(mf)
+if meta.get('dtype') not in ('uint16', 'uint32'):
+    raise SystemExit(f"Неизвестный тип токенов в meta.json: {meta.get('dtype')!r}.")
 dt = np.uint16 if meta['dtype'] == 'uint16' else np.uint32
-tr = np.memmap(os.path.join(D, 'train.bin'), dtype=dt, mode='r'); va = np.memmap(os.path.join(D, 'val.bin'), dtype=dt, mode='r') if os.path.exists(os.path.join(D, 'val.bin')) else tr
-T = int(CFG.get('max_len', 512))
+train_path = os.path.join(D, 'train.bin')
+val_path = os.path.join(D, 'val.bin')
+if not os.path.isfile(train_path) or os.path.getsize(train_path) < np.dtype(dt).itemsize:
+    raise SystemExit('train.bin отсутствует или пуст. Вернитесь во вкладку «Данные» и подготовьте набор заново.')
+tr = np.memmap(train_path, dtype=dt, mode='r')
+T = max(8, int(CFG.get('max_len', 512)))
+if len(tr) < T + 2:
+    raise SystemExit(f'В обучающем наборе только {len(tr)} токенов, а для контекста {T} нужно минимум {T + 2}. Уменьшите длину контекста или добавьте данные.')
+# Пустой/слишком короткий val.bin не должен обрушивать обучение: используем train.bin для оценки.
+if os.path.isfile(val_path) and os.path.getsize(val_path) >= (T + 2) * np.dtype(dt).itemsize:
+    va = np.memmap(val_path, dtype=dt, mode='r')
+else:
+    va = tr
+    if os.path.exists(val_path):
+        log('Проверочная часть пуста или короче контекста; для оценки временно использую обучающие данные.')
 def batch(src, B, gen):
-    ix = torch.randint(len(src) - T - 1, (B,), generator=gen)
-    x = torch.from_numpy(np.stack([src[i:i + T + 1].astype(np.int64) for i in ix.tolist()]))   # упаковка без паддинга
+    max_start = len(src) - T - 1
+    if max_start < 0:
+        raise ValueError(f'Недостаточно токенов ({len(src)}) для окна {T + 1}.')
+    # randint не включает верхнюю границу; +1 позволяет брать и последнее полное окно.
+    ix = torch.randint(0, max_start + 1, (B,), generator=gen)
+    x = torch.from_numpy(np.stack([src[i:i + T + 1].astype(np.int64) for i in ix.tolist()]))
     if cuda: x = x.pin_memory().to(dev, non_blocking=True)
     return x
 
